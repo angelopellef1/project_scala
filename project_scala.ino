@@ -8,6 +8,22 @@ int32_t aX,aY,aZ,tE;
 
 MPU6050 mpu ;
 
+typedef struct
+{
+  int32_t x0,y0,z0;
+  int32_t mod0;
+  int32_t mod_thresold_down;  //threasold going down ( higher)
+  int32_t mod_thresold_up;  //threasold goind up ( lower)
+}CLB_Type;
+CLB_Type calib;
+
+
+/*Samples variables*/
+int32_t MEA_Array[4]; //evaluate direction on 4 samples
+bool acceptable_data = false;
+
+
+
 void setup() 
 {
   Serial.begin(115200);
@@ -70,35 +86,65 @@ enum T_STG
 {
     CONNE = 0x00,
     CALIB,
-    READ_OP
+    READ_OP,
+    EVALUATING,
+    NET_SEND,
 }fsm_st;
 
-
+enum fsm_st fsm = READ_OP;
 
 void Tsk_MPU()
 {
   int32_t modu = 0;
-    Vector rawAccel = mpu.readRawAccel();
+  Vector rawAccel = mpu.readRawAccel();
   Vector normAccel = mpu.readNormalizeAccel();
-aX = rawAccel.XAxis;
-aY = rawAccel.YAxis;
-aZ = rawAccel.ZAxis;
-
-modu = sqrt(aX^2 + aY^2 +aZ^2);
-
-  
-    Serial.print("X: ");Serial.print(aX);
-    Serial.print("| Y: ");Serial.print(aY);
-    Serial.print("| Z: ");Serial.print(aZ);
-    Serial.print("| MOD: ");Serial.println(modu);
-   
-    delay(100);    
+  aX = rawAccel.XAxis;
+  aY = rawAccel.YAxis;
+  aZ = rawAccel.ZAxis;
+  modu = sqrt(aX^2 + aY^2 +aZ^2);
+  Serial.print("X: ");Serial.print(aX);
+  Serial.print("| Y: ");Serial.print(aY);
+  Serial.print("| Z: ");Serial.print(aZ);
+  Serial.print("| MOD: ");Serial.println(modu);
+  delay(100);    
 }
 
 
 void loop() {
   // put your main code here, to run repeatedly:
   //PrintGets();
+
+  switch(fsm)
+  {
+    case CONNE:
+
+    break;
+
+    case CALIB:
+
+    break;
+
+    case READ_OP:
+      Tsk_MPU();
+    break;
+
+    case EVALUATING:
+      if(acceptable_data)
+      {
+         fsm = NET_SEND;
+      }
+      else
+      {
+         fsm = READ_OP;
+      }
+    break;
+
+    case NET_SEND:
+      fsm = READ_OP;
+    break;
+
+  }
+  
   Tsk_MPU();
- 
+
 }
