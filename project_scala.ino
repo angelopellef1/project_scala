@@ -3,24 +3,47 @@
 #include <Math.h>
 #include <MPU6050.h>
 
+#define MOD_THRESOLD_U  250
+#define MOD_THRESOLD_D  100
+#define CALIBRATION_CYCLES  20
+
 const int MPU_addr= 0x68;
 int32_t aX,aY,aZ,tE;
+float modu;
+
 
 MPU6050 mpu ;
 
 typedef struct
 {
   int32_t x0,y0,z0;
-  int32_t mod0;
+  float mod0;
   int32_t mod_thresold_down;  //threasold going down ( higher)
   int32_t mod_thresold_up;  //threasold goind up ( lower)
 }CLB_Type;
-CLB_Type calib;
 
+
+typedef enum 
+{
+    CONNE = 0x00,
+    CALIB,
+    READ_OP,
+    EVALUATING,
+    NET_SEND,
+}fsm_st;
+
+
+
+CLB_Type calib;
+int32_t calib_cycles = 0;
 
 /*Samples variables*/
-int32_t MEA_Array[4]; //evaluate direction on 4 samples
+float MEA_Array[4]; //evaluate direction on 4 samples
 bool acceptable_data = false;
+int32_t s = 0;
+
+/*machine var*/
+fsm_st fsm = CALIB;
 
 
 
@@ -42,6 +65,9 @@ void setup()
   // mpu.setAccelOffsetZ();
   
   checkSettings();
+  calib.mod_thresold_up = MOD_THRESOLD_U;
+  calib.mod_thresold_down = MOD_THRESOLD_D;
+  fsm = CALIB;
 }
 
 void checkSettings()
@@ -82,33 +108,32 @@ void checkSettings()
   Serial.println();
 }
 
-enum T_STG
-{
-    CONNE = 0x00,
-    CALIB,
-    READ_OP,
-    EVALUATING,
-    NET_SEND,
-}fsm_st;
 
-enum fsm_st fsm = READ_OP;
+
+
 
 void Tsk_MPU()
 {
-  int32_t modu = 0;
+   
   Vector rawAccel = mpu.readRawAccel();
   Vector normAccel = mpu.readNormalizeAccel();
   aX = rawAccel.XAxis;
   aY = rawAccel.YAxis;
   aZ = rawAccel.ZAxis;
   modu = sqrt(aX^2 + aY^2 +aZ^2);
-  Serial.print("X: ");Serial.print(aX);
-  Serial.print("| Y: ");Serial.print(aY);
-  Serial.print("| Z: ");Serial.print(aZ);
-  Serial.print("| MOD: ");Serial.println(modu);
+//  Serial.print("X: ");Serial.print(aX);
+//  Serial.print("| Y: ");Serial.print(aY);
+//  Serial.print("| Z: ");Serial.print(aZ);
+//  Serial.print("| MOD: ");Serial.println(modu);
   delay(100);    
 }
 
+void Tsk_ResetQueue()
+{
+  s=0;
+  memset(MEA_Array,0x00,sizeof(MEA_Array));
+  acceptable_data = false;
+}
 
 void loop() {
   // put your main code here, to run repeatedly:
@@ -121,17 +146,73 @@ void loop() {
     break;
 
     case CALIB:
+      Tsk_MPU();
+      calib.x0 += aX;
+      calib.y0 += aY;
+      calib.z0 += aZ;
+      calib.mod0 += modu;
+      calib_cycles++;
+      if(calib_cycles == CALIBRATION_CYCLES)
+      {
+        calib_cycles = 0;
+          calib.x0 /=  CALIBRATION_CYCLES;
+          calib.y0 /=  CALIBRATION_CYCLES;
+          calib.z0 /=  CALIBRATION_CYCLES;
+          calib.mod0 /= CALIBRATION_CYCLES; //base on this
+           Serial.println("DBG calibration ended");
+          fsm = READ_OP;
+      }
 
     break;
 
     case READ_OP:
       Tsk_MPU();
+      aX -= calib.x0;
+      aY -= calib.y0;
+      aZ -= calib.z0;
+      modu -= calib.mod0;
+      //Serial.print("|Z: ");Serial.println(aZ);
+      if((aZ > MOD_THRESOLD_U) || (aZ < -MOD_THRESOLD_U))
+      {
+          Serial.println("DBG Collect");
+          if (aZ <0)
+          {
+            aZ *= -1;
+          }
+          Serial.print("|Z: ");Serial.println(aZ);
+          MEA_Array[s] = aZ;
+          s++;
+          if(s>=3)
+          {
+            acceptable_data = true;
+            Serial.println("DBG Acceptable data");
+            fsm = EVALUATING;
+          }
+      }
+       fsm = EVALUATING;
     break;
 
     case EVALUATING:
       if(acceptable_data)
-      {
+      { 
+        if(MEA_Array[0] > MEA_Array[1]  )
+        {
+          if(MEA_Array[1] > MEA_Array[2]  )
+          {
+            Serial.println("DBG SCENDOOOOO");
+          }
+        }
+        if(MEA_Array[0] < MEA_Array[1]  )
+        {
+          if(MEA_Array[1] < MEA_Array[2]  )
+          {
+            Serial.println("DBG SALGOOO");
+          }
+        }
+        
          fsm = NET_SEND;
+         Tsk_ResetQueue();
+         
       }
       else
       {
@@ -140,7 +221,11 @@ void loop() {
     break;
 
     case NET_SEND:
-      fsm = READ_OP;
+       Serial.println("DBG Sending something to the net");
+        calib.x0 = 0;
+           calib.y0 = 0;
+            calib.z0 = 0;
+      fsm = CALIB;
     break;
 
   }
